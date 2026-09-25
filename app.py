@@ -303,8 +303,13 @@ with tab2:
 
     if run_prediction:
         try:
-            # Classification
+            # Regression
+            reg_input = prepare_input(patient, reg_art)
+            predicted_los = max(0.0, float(reg_model.predict(reg_input)[0]))
+
+            # The saved classifier pipeline also expects Length of Stay.
             cls_input = prepare_input(patient, cls_art)
+            cls_input["Length of Stay"] = max(1.0, predicted_los)
             probabilities = cls_model.predict_proba(cls_input)[0]
             pred_index = int(np.argmax(probabilities))
 
@@ -314,10 +319,6 @@ with tab2:
             else:
                 classes = list(cls_model.classes_)
                 predicted_label = classes[pred_index]
-
-            # Regression
-            reg_input = prepare_input(patient, reg_art)
-            predicted_los = max(0.0, float(reg_model.predict(reg_input)[0]))
 
             # Clustering
             cluster_input = pd.DataFrame([{
