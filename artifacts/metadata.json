@@ -1,0 +1,18 @@
+{
+  "project": "Healthcare Resource & Patient Analytics Portal",
+  "classification_target": "Test Results",
+  "classification_classes": [
+    0,
+    1,
+    2
+  ],
+  "regression_target": "Length of Stay",
+  "selected_cluster_k": 2,
+  "clinical_note": "Analytics/ML demonstration only; not for clinical diagnosis or treatment.",
+  "leakage_controls": [
+    "Name/Doctor/Hospital excluded as high-cardinality identifiers",
+    "Room Number excluded as operational noise",
+    "Discharge Date and Length of Stay excluded from predictors",
+    "Billing Amount excluded from admission-time predictors"
+  ]
+}
