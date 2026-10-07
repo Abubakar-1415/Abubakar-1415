@@ -217,6 +217,9 @@ def rag_components():
                 _qdrant.create_collection(
                     collection_name=QDRANT_FEEDBACK_COLLECTION,
                     vectors_config=models.VectorParams(size=1, distance=models.Distance.COSINE))
+            for field, schema in (("user_id", models.PayloadSchemaType.INTEGER),
+                                  ("doc_name", models.PayloadSchemaType.KEYWORD)):
+                _qdrant.create_payload_index(QDRANT_FEEDBACK_COLLECTION, field, schema)
             vector_config = _qdrant.get_collection(QDRANT_COLLECTION).config.params.vectors
             vector_size = getattr(vector_config, "size", None)
             if vector_size != NVIDIA_EMBEDDING_DIMENSION:
@@ -248,6 +251,14 @@ def _match(key: str, value) -> models.FieldCondition:
 def delete_vectors_for_document(client: QdrantClient, user_id: int, name: str):
     client.delete(
         collection_name=QDRANT_COLLECTION,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(must=[_match("user_id", user_id), _match("doc_name", name)])),
+        wait=True)
+
+
+def delete_feedback_for_document(client: QdrantClient, user_id: int, name: str):
+    client.delete(
+        collection_name=QDRANT_FEEDBACK_COLLECTION,
         points_selector=models.FilterSelector(
             filter=models.Filter(must=[_match("user_id", user_id), _match("doc_name", name)])),
         wait=True)

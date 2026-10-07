@@ -233,8 +233,15 @@ def feedback_votes(client, uid: int, question: str, section_ids: list[int]) -> d
     return votes
 
 
-def record_feedback(uid: int, question: str, section_ids: list[int], helpful: bool) -> None:
+def record_feedback(
+    uid: int, question: str, citations: list[dict], helpful: bool
+) -> None:
     client, _, _ = rag.rag_components()
+    doc_names = {
+        int(citation["section_id"]): str(citation["doc"])
+        for citation in citations
+    }
+    section_ids = list(doc_names)
     point_ids = [feedback_point_id(uid, question, section_id) for section_id in section_ids]
     existing = {
         int(point.payload.get("section_id", 0)): point
@@ -261,6 +268,7 @@ def record_feedback(uid: int, question: str, section_ids: list[int], helpful: bo
                 vector=[1.0],
                 payload={
                     "user_id": uid,
+                    "doc_name": doc_names[section_id],
                     "section_id": section_id,
                     "good": good,
                     "bad": bad,
@@ -372,11 +380,20 @@ with st.sidebar:
                             key=f"delete-{index}-{document['name']}",
                             type="primary",
                         ):
-                            client, _, _ = rag.rag_components()
-                            rag.delete_vectors_for_document(
-                                client, uid, document["name"]
-                            )
-                            st.rerun()
+                            try:
+                                client, _, _ = rag.rag_components()
+                                rag.delete_feedback_for_document(
+                                    client, uid, document["name"]
+                                )
+                                rag.delete_vectors_for_document(
+                                    client, uid, document["name"]
+                                )
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(
+                                    f"Could not delete {document['name']}: "
+                                    f"{rag.safe_error_detail(exc)}"
+                                )
         else:
             st.info("Your library is empty. Upload a file to start searching.")
     except Exception as exc:
@@ -474,7 +491,7 @@ if result:
                             record_feedback(
                                 uid,
                                 result["question"],
-                                [int(item["section_id"]) for item in citations],
+                                citations,
                                 True,
                             )
                             st.session_state["ask_doc_feedback_message"] = (
@@ -494,7 +511,7 @@ if result:
                             record_feedback(
                                 uid,
                                 result["question"],
-                                [int(item["section_id"]) for item in citations],
+                                citations,
                                 False,
                             )
                             st.session_state["ask_doc_feedback_message"] = (
