@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+python-docx
+openpyxl
+pymupdf
+langchain-core
+langchain-nvidia-ai-endpoints
+langchain-text-splitters
+qdrant-client

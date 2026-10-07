@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: ask-doc
+    runtime: python
+    region: oregon
+    plan: starter
+    rootDir: ask-doc
+    buildCommand: pip install -r requirements.txt
+    startCommand: python rag_app.py
+    healthCheckPath: /health
+    disk:
+      name: ask-doc-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: DB_PATH
+        value: /var/data/AskDoc.db
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: NVIDIA_CHAT_MODEL
+        value: nvidia/nemotron-3-super-120b-a12b
+      - key: NVIDIA_EMBEDDING_MODEL
+        value: nvidia/nv-embedqa-e5-v5
+      - key: NVIDIA_EMBEDDING_DIMENSION
+        value: "1024"
+      - key: NVIDIA_QDRANT_COLLECTION
+        value: ask_doc_documents_nvidia_nvembedqa_e5_v5_1024
+      - key: OWNER_EMAIL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
