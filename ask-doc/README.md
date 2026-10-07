@@ -1,9 +1,8 @@
 # Ask Doc
 
-Ask Doc lets visitors upload multiple PDF, DOCX, and XLSX files, index them in
-Qdrant, and ask questions grounded in the uploaded content. The app is public:
-anyone with its URL can view, search, upload, and delete documents in the shared
-library.
+Ask Doc lets people create an account with a username and password, upload
+multiple PDF, DOCX, and XLSX files, and ask questions grounded in their own
+private document library. Answers are displayed as structured JSON.
 
 ## Deploy on Streamlit Community Cloud
 
@@ -15,16 +14,26 @@ configure the values below. Keep these values out of GitHub.
 NVIDIA_API_KEY = "your-nvidia-api-key"
 QDRANT_URL = "https://your-cluster.example.qdrant.io"
 QDRANT_API_KEY = "your-qdrant-api-key"
+DATABASE_URL = "postgresql://user:password@host:5432/database?sslmode=require"
 NVIDIA_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 NVIDIA_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b"
 NVIDIA_EMBEDDING_DIMENSION = "2048"
 NVIDIA_QDRANT_COLLECTION = "ask_doc_documents_nemotron_3_embed_1b_2048"
-CLOUD_USER_EMAIL = "you@example.com"
+MAX_UPLOAD_MB = "100"
 ```
 
-`CLOUD_USER_EMAIL` is used only to retain the existing Qdrant document namespace;
-it does not enable or require Google sign-in. All visitors share that namespace.
-Remove any old `[auth]` OAuth configuration from app secrets.
+Set `DATABASE_URL` to your managed PostgreSQL connection string in the app's
+**Settings → Secrets**. Account records have unique case-insensitive usernames;
+passwords are stored as salted scrypt hashes, never as plaintext. Remove the
+old Google OAuth settings. Each account receives a separate Qdrant namespace,
+and sessions expire after four hours.
+
+The previous shared-library documents are preserved in their old Qdrant
+namespace and are not visible to newly registered accounts. They have no
+recorded owner and are not automatically assigned to the first registrant.
+
+Each uploaded file may be up to 100 MB. The Streamlit app also sets
+`server.maxUploadSize` to 100 MB.
 
 If an existing deployment still sets `NVIDIA_EMBEDDING_MODEL` to either retired
 embedding model, the app maps it to the currently available
@@ -43,4 +52,5 @@ streamlit run streamlit_app.py
 ```
 
 Configure the same values in `.streamlit/secrets.toml` for local development;
-never commit that file.
+never commit that file. Answers are returned with `answer`, `citations`,
+`match_percent`, `not_found`, and `match_explanation` fields.

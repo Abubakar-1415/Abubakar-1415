@@ -82,7 +82,7 @@ else:
         "NVIDIA_QDRANT_COLLECTION",
         f"ask_doc_documents_{NVIDIA_EMBEDDING_MODEL.replace('/', '_')}_"
         f"{NVIDIA_EMBEDDING_DIMENSION}")
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
+MAX_UPLOAD_BYTES = max(100, int(os.environ.get("MAX_UPLOAD_MB", "100"))) * 1024 * 1024
 MAX_FILES_PER_UPLOAD = 10
 MAX_CHUNKS_PER_FILE = int(os.environ.get("MAX_CHUNKS_PER_FILE", "1500"))
 MAX_SHEET_ROWS = 5000

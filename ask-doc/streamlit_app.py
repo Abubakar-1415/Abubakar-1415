@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import os
+import time
 import uuid
 
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
+import auth_store as auth
+
 SECRET_ENV_KEYS = (
+    "DATABASE_URL",
     "NVIDIA_API_KEY",
     "QDRANT_URL",
     "QDRANT_API_KEY",
@@ -39,23 +44,105 @@ import rag_app as rag
 
 st.set_page_config(page_title="Ask Doc", page_icon=":material/search:", layout="wide")
 
+SESSION_DURATION_SECONDS = 4 * 60 * 60
+SESSION_STARTED_AT_KEY = "_ask_doc_session_started_at"
+USER_ID_KEY = "_ask_doc_user_id"
+USERNAME_KEY = "_ask_doc_username"
+logger = logging.getLogger("ask_doc.streamlit")
 
-def user_id_for(email: str) -> int:
-    digest = hashlib.sha256(email.strip().lower().encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+@st.cache_resource
+def initialize_user_store() -> bool:
+    auth.initialize_user_store(os.environ.get("DATABASE_URL", ""))
+    return True
 
 
-def shared_user_id() -> int:
+def clear_authenticated_session() -> None:
+    st.session_state.pop(USER_ID_KEY, None)
+    st.session_state.pop(USERNAME_KEY, None)
+    st.session_state.pop(SESSION_STARTED_AT_KEY, None)
+
+
+def authenticate() -> tuple[int, str] | None:
+    if not st.session_state.get(USER_ID_KEY):
+        return None
+    started_at = st.session_state.get(SESSION_STARTED_AT_KEY)
+    if started_at is None or auth.session_expired(started_at, time.time()):
+        clear_authenticated_session()
+        st.session_state["_ask_doc_session_expired"] = True
+        return None
+    return int(st.session_state[USER_ID_KEY]), str(st.session_state[USERNAME_KEY])
+
+
+def show_authentication() -> None:
+    st.title("Ask Doc")
+    st.caption("Create a private account to manage and search your documents.")
+    if st.session_state.pop("_ask_doc_session_expired", False):
+        st.warning("Your session expired. Log in again to continue.")
+
+    mode = st.radio("Account", ["Log in", "Create account"], horizontal=True)
+    with st.form("account-form"):
+        username = st.text_input("Username", max_chars=32)
+        password = st.text_input("Password", type="password", max_chars=1024)
+        confirm_password = ""
+        if mode == "Create account":
+            confirm_password = st.text_input(
+                "Confirm password", type="password", max_chars=1024
+            )
+        submitted = st.form_submit_button(mode, type="primary", width="stretch")
+
+    if not submitted:
+        return
+
     try:
-        namespace_seed = str(st.secrets["CLOUD_USER_EMAIL"]).strip().lower()
-    except StreamlitSecretNotFoundError as exc:
-        raise RuntimeError(
-            "Configure CLOUD_USER_EMAIL in app secrets to preserve the shared "
-            "document library."
-        ) from exc
-    if not namespace_seed:
-        raise RuntimeError("CLOUD_USER_EMAIL in app secrets must not be empty.")
-    return user_id_for(namespace_seed)
+        if mode == "Create account":
+            if password != confirm_password:
+                st.error("The passwords do not match.")
+                return
+            uid = auth.create_user(
+                os.environ.get("DATABASE_URL", ""), username, password
+            )
+            normalized_username = auth.normalize_username(username)
+        else:
+            account = auth.authenticate_user(
+                os.environ.get("DATABASE_URL", ""), username, password
+            )
+            if account is None:
+                st.error("Invalid username or password.")
+                return
+            uid, normalized_username = account
+    except auth.UsernameAlreadyExistsError:
+        st.error("That username is already registered.")
+        return
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    except Exception:
+        logger.exception("Ask Doc account operation failed")
+        st.error("The account operation failed. Check the database configuration.")
+        return
+
+    st.session_state[USER_ID_KEY] = uid
+    st.session_state[USERNAME_KEY] = normalized_username
+    st.session_state[SESSION_STARTED_AT_KEY] = time.time()
+    st.rerun()
+
+
+@st.fragment(run_every="1s")
+def monitor_session_expiry() -> None:
+    started_at = st.session_state.get(SESSION_STARTED_AT_KEY)
+    if started_at is None:
+        return
+    now = time.time()
+    remaining = SESSION_DURATION_SECONDS - (now - started_at)
+    if auth.session_expired(started_at, now):
+        clear_authenticated_session()
+        st.session_state["_ask_doc_session_expired"] = True
+        st.rerun()
+    hours, remainder = divmod(int(remaining), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    st.caption(f"Session expires in {hours:02d}:{minutes:02d}:{seconds:02d}")
+    st.progress(max(0.0, min(1.0, remaining / SESSION_DURATION_SECONDS)))
 
 
 def indexed_documents(uid: int) -> list[dict]:
@@ -261,15 +348,42 @@ def record_feedback(
     )
 
 
-uid = shared_user_id()
-st.title("Ask Doc")
-st.caption("Ask your knowledge. Find the answer.")
+try:
+    initialize_user_store()
+except Exception:
+    logger.exception("Ask Doc account database initialization failed")
+    st.title("Ask Doc")
+    st.error(
+        "The account database is not configured or unavailable. Add a working "
+        "PostgreSQL DATABASE_URL in the Streamlit app secrets."
+    )
+    st.stop()
+
+authenticated_user = authenticate()
+if authenticated_user is None:
+    show_authentication()
+    st.stop()
+
+uid, username = authenticated_user
+header_title, header_session, header_logout = st.columns(
+    [3, 2, 1], vertical_alignment="center"
+)
+with header_title:
+    st.title("Ask Doc")
+    st.caption("Ask your knowledge. Find the answer.")
+with header_session:
+    st.caption(f"Private library for **{username}**")
+    monitor_session_expiry()
+with header_logout:
+    if st.button("Log out", icon=":material/logout:", width="stretch"):
+        clear_authenticated_session()
+        st.rerun()
 
 st.divider()
 
 with st.sidebar:
-    st.subheader("Shared document library")
-    st.caption("Anyone with access to this app can view and manage these documents.")
+    st.subheader("My private document library")
+    st.caption(f"Logged in as {username}")
     st.divider()
 
     st.subheader("Upload your documents")
@@ -384,35 +498,9 @@ if result:
     answer = result["answer"]
     citations = answer["citations"]
     with st.container(border=True):
-        answer_col, score_col = st.columns([4, 1], vertical_alignment="center")
-        with answer_col:
-            st.subheader("Answer")
-            st.caption(
-                "No supporting answer found in your documents."
-                if answer["not_found"]
-                else "Generated from your uploaded documents."
-            )
-        with score_col:
-            if not answer["not_found"]:
-                st.metric("Match score", f"{answer['match_percent']}%")
-        if answer["not_found"]:
-            st.info(answer["answer"])
-        else:
-            st.markdown(answer["answer"])
-            with st.expander("Copy answer"):
-                st.code(answer["answer"], language=None)
+        st.subheader("Answer (JSON)")
+        st.json(answer, expanded=True)
 
-        if citations:
-            st.markdown("#### Sources")
-            for index, citation in enumerate(citations, start=1):
-                location = citation.get("page_num") or citation.get("location") or ""
-                with st.expander(
-                    f"{index}. {citation['doc']} · {citation['title']} · {location}"
-                ):
-                    st.caption(f"{citation['kind'].upper()} · {location}")
-                    st.write(citation["excerpt"])
-
-        st.caption(answer.get("match_explanation", ""))
         if citations and not answer["not_found"]:
             st.divider()
             st.markdown("**Was this answer useful?**")
@@ -462,4 +550,4 @@ if result:
                         except Exception as exc:
                             st.error(f"Could not save feedback: {rag.safe_error_detail(exc)}")
 elif not st.session_state.get("ask_doc_search_error"):
-    st.info("Ask a question to search the shared document library.")
+    st.info("Ask a question to search your private document library.")
