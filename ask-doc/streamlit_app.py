@@ -462,4 +462,4 @@ if result:
                         except Exception as exc:
                             st.error(f"Could not save feedback: {rag.safe_error_detail(exc)}")
 elif not st.session_state.get("ask_doc_search_error"):
-    st.info("Ask a question to search your private document library.")
+    st.info("Ask a question to search the shared document library.")
