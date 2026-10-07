@@ -404,7 +404,12 @@ def answer_from_sources(query: str, sources: list[dict]) -> dict:
          "Do not use outside knowledge, guess, or fill gaps. If the evidence does not "
          "directly support an answer, set not_found=true and explain that the documents "
          "do not say. For every factual answer, list only source labels that directly "
-         "support it. Return the requested structured JSON."),
+         "support it. Review all supplied sources, including sources from different "
+         "documents. If a name or document is mentioned in the question, prioritize "
+         "sources whose document name, section title, or evidence matches it. When the "
+         "same keyword or fact appears in multiple documents, describe the supported "
+         "information from each relevant document and cite each source. Return the "
+         "requested structured JSON."),
         ("human", "Question:\n{question}\n\nDocument evidence:\n{context}"),
     ])
     try:

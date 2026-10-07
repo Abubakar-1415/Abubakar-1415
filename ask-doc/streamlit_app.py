@@ -13,6 +13,7 @@ from streamlit.errors import StreamlitSecretNotFoundError
 from qdrant_client import QdrantClient
 
 import auth_store as auth
+import search as document_search
 
 SECRET_ENV_KEYS = (
     "NVIDIA_API_KEY",
@@ -223,80 +224,6 @@ def ingest_file(uid: int, name: str, data: bytes) -> int:
     return len(sections)
 
 
-def retrieve(uid: int, question: str) -> list[dict]:
-    client, embeddings, _ = rag.rag_components()
-    vector = embeddings.embed_query(question)
-    response = client.query_points(
-        collection_name=rag.QDRANT_COLLECTION,
-        query=vector,
-        query_filter=rag.models.Filter(must=[rag._match("user_id", uid)]),
-        limit=24,
-        with_payload=True,
-    )
-    best: dict[int, dict] = {}
-    for point in response.points:
-        payload = point.payload or {}
-        section_id = int(payload.get("section_id", 0))
-        if not section_id:
-            continue
-        score = max(0.0, min(1.0, float(point.score or 0.0)))
-        if score < rag.MIN_VECTOR_SIMILARITY:
-            continue
-        source = {
-            "section_id": section_id,
-            "title": str(payload.get("title", "")),
-            "doc": str(payload.get("doc_name", "")),
-            "kind": str(payload.get("kind", "")),
-            "location": str(payload.get("location", "")),
-            "page_num": payload.get("page_num"),
-            "excerpt": str(payload.get("text", "")),
-            "score": score,
-        }
-        if section_id not in best or score > best[section_id]["score"]:
-            best[section_id] = source
-    votes = feedback_votes(client, uid, question, list(best))
-    for section_id, source in best.items():
-        source["good_votes"], source["bad_votes"] = votes.get(section_id, (0, 0))
-    sources = sorted(
-        best.values(),
-        key=lambda source: (
-            source["good_votes"] - source["bad_votes"],
-            source["score"],
-        ),
-        reverse=True,
-    )[:6]
-    for index, source in enumerate(sources, start=1):
-        source["id"] = f"S{index}"
-    return sources
-
-
-def feedback_point_id(uid: int, question: str, section_id: int) -> str:
-    query_hash = hashlib.sha256(rag.norm(question).encode("utf-8")).hexdigest()
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{uid}:{query_hash}:{section_id}"))
-
-
-def feedback_votes(client, uid: int, question: str, section_ids: list[int]) -> dict[int, tuple[int, int]]:
-    if not section_ids:
-        return {}
-    point_ids = [feedback_point_id(uid, question, section_id) for section_id in section_ids]
-    points = client.retrieve(
-        collection_name=rag.QDRANT_FEEDBACK_COLLECTION,
-        ids=point_ids,
-        with_payload=True,
-        with_vectors=False,
-    )
-    votes = {}
-    for point in points:
-        payload = point.payload or {}
-        section_id = int(payload.get("section_id", 0))
-        if section_id:
-            votes[section_id] = (
-                int(payload.get("good", 0)),
-                int(payload.get("bad", 0)),
-            )
-    return votes
-
-
 def record_feedback(
     uid: int, question: str, citations: list[dict], helpful: bool
 ) -> None:
@@ -306,7 +233,10 @@ def record_feedback(
         for citation in citations
     }
     section_ids = list(doc_names)
-    point_ids = [feedback_point_id(uid, question, section_id) for section_id in section_ids]
+    point_ids = [
+        document_search.feedback_point_id(uid, question, section_id)
+        for section_id in section_ids
+    ]
     existing = {
         int(point.payload.get("section_id", 0)): point
         for point in client.retrieve(
@@ -479,11 +409,22 @@ if submitted:
     else:
         try:
             with st.spinner("Searching your documents and preparing an answer..."):
-                sources = retrieve(uid, question.strip())
-                answer = rag.answer_from_sources(question.strip(), sources)
+                evidence = document_search.retrieve(uid, question.strip())
+                answer = None
+                answer_error = ""
+                if evidence["sources"]:
+                    try:
+                        answer = rag.answer_from_sources(
+                            question.strip(), evidence["sources"]
+                        )
+                    except Exception as exc:
+                        answer_error = rag.safe_error_detail(exc)
+                        logger.exception("AI answer generation failed after retrieval")
             st.session_state["ask_doc_search_result"] = {
                 "question": question.strip(),
                 "answer": answer,
+                "answer_error": answer_error,
+                "evidence": evidence,
             }
         except Exception as exc:
             st.session_state["ask_doc_search_error"] = rag.safe_error_detail(exc)
@@ -494,16 +435,30 @@ if error := st.session_state.get("ask_doc_search_error"):
 result = st.session_state.get("ask_doc_search_result")
 if result:
     answer = result["answer"]
-    citations = answer["citations"]
+    evidence = result["evidence"]
+    citations = answer["citations"] if answer else []
     with st.container(border=True):
         st.subheader("Answer")
-        if answer["not_found"]:
-            st.info(answer["answer"])
-        else:
+        if answer and not answer["not_found"]:
             st.markdown(answer["answer"])
             st.caption(
                 f"Relevance estimate: {answer['match_percent']}% "
                 "(not a calibrated probability of correctness)"
+            )
+        elif result["answer_error"]:
+            st.warning(
+                "I found matching document passages, but the AI summary failed. "
+                "The exact matches are listed below."
+            )
+            st.caption(f"Answer service: {result['answer_error']}")
+        elif answer:
+            st.info(answer["answer"])
+        else:
+            st.info("No strong matches were found. Try an exact name or keyword.")
+        if evidence["semantic_error"]:
+            st.caption(
+                "Semantic search was unavailable; exact keyword search was still "
+                f"attempted. {evidence['semantic_error']}"
             )
 
         if citations:
@@ -519,10 +474,59 @@ if result:
                     st.caption(citation["kind"].upper())
                     st.write(citation["excerpt"])
 
-        with st.expander("View answer as JSON"):
-            st.json(answer, expanded=True)
+        matches = evidence["keyword_matches"]
+        if matches:
+            st.markdown(
+                f"#### Exact keyword matches · {evidence['keyword_match_count']} "
+                f"passages in {evidence['keyword_match_documents']} documents"
+            )
+            if evidence["lexical_error"]:
+                st.warning(
+                    f"Keyword scan stopped after {evidence['scanned_chunks']} "
+                    f"passages: {evidence['lexical_error']}"
+                )
+            else:
+                st.caption(
+                    f"Checked all {evidence['scanned_chunks']} indexed passages. "
+                    "Each match shows the exact keyword with its surrounding text."
+                )
+            for match_index, match in enumerate(matches, start=1):
+                location = match.get("page_num") or match.get("location") or ""
+                label = f"{match_index}. {match['doc']}"
+                if location:
+                    label += f" · {location}"
+                with st.expander(label):
+                    st.caption(
+                        f"Matched terms: {', '.join(match['matched_keywords']) or 'document title'}"
+                    )
+                    for context in match["keyword_contexts"]:
+                        st.write(
+                            f"{context['prefix']} **{context['keyword']}** "
+                            f"{context['suffix']}"
+                        )
+                    if not match["keyword_contexts"]:
+                        st.write(match["excerpt"])
+            if evidence["keyword_match_count"] > len(matches):
+                st.caption(
+                    f"Showing the top {len(matches)} of "
+                    f"{evidence['keyword_match_count']} matching passages."
+                )
+        elif evidence["lexical_error"]:
+            st.warning(
+                "Full-library exact-keyword search failed: "
+                f"{evidence['lexical_error']}"
+            )
+        elif evidence["query_terms"]:
+            st.caption(
+                f"Checked {evidence['scanned_chunks']} indexed passages; "
+                "no exact keyword matches found."
+            )
 
-        if citations and not answer["not_found"]:
+        if answer:
+            with st.expander("View answer as JSON"):
+                st.json(answer, expanded=True)
+
+        if citations and answer and not answer["not_found"]:
             st.divider()
             st.markdown("**Was this answer useful?**")
             feedback_message = st.session_state.get("ask_doc_feedback_message")
