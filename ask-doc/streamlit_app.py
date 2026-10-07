@@ -48,40 +48,21 @@ def user_id_for(email: str) -> int:
 def require_login() -> tuple[str, int]:
     if not getattr(st.user, "is_logged_in", False):
         st.title("Ask Doc")
-        st.write("Sign in with Google to upload and search your private documents.")
-        try:
-            has_auth = "auth" in st.secrets
-        except StreamlitSecretNotFoundError:
-            has_auth = False
-        if not has_auth:
-            st.error("Add your Google OIDC `[auth]` configuration in Streamlit app secrets.")
-            st.stop()
+        st.write("Sign in with Google to access your private document library.")
         if st.button("Sign in with Google", type="primary"):
             st.login()
         st.stop()
 
-    email = str(getattr(st.user, "email", "") or "").strip().lower()
-    if not email:
-        st.error("Your Google sign-in did not provide an email address.")
-        st.stop()
     try:
-        configured_emails = st.secrets.get("ALLOWED_EMAILS", [])
+        allowed_email = str(st.secrets["CLOUD_USER_EMAIL"]).strip().lower()
     except StreamlitSecretNotFoundError:
-        configured_emails = []
-    if isinstance(configured_emails, str):
-        allowed_emails = {
-            value.strip().lower()
-            for value in configured_emails.split(",")
-            if value.strip()
-        }
-    else:
-        allowed_emails = {
-            str(value).strip().lower()
-            for value in configured_emails
-            if str(value).strip()
-        }
-    if email not in allowed_emails:
-        st.error("This Google account is not allowlisted. Configure `ALLOWED_EMAILS` in app secrets.")
+        allowed_email = ""
+    email = str(getattr(st.user, "email", "") or "").strip().lower()
+    if not allowed_email:
+        st.error("Configure `CLOUD_USER_EMAIL` in app secrets before using the app.")
+        st.stop()
+    if not email or email != allowed_email:
+        st.error("This Google account is not authorized to use this private app.")
         st.stop()
     return email, user_id_for(email)
 
