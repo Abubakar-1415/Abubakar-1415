@@ -126,6 +126,26 @@ class AuthStoreTests(unittest.TestCase):
         self.assertEqual(json.loads(serialized), answer)
         self.assertTrue(answer["not_found"])
 
+    def test_answer_provider_error_includes_redacted_cause(self):
+        llm = MagicMock()
+        llm.with_structured_output.return_value.invoke.side_effect = RuntimeError(
+            "HTTP 400 invalid temperature"
+        )
+        sources = [{
+            "id": "S1",
+            "doc": "sample.docx",
+            "title": "Sample",
+            "location": "section 1",
+            "excerpt": "Relevant evidence.",
+        }]
+        with patch.object(rag_app, "rag_components", return_value=(None, None, llm)):
+            with self.assertRaises(rag_app.HTTPException) as raised:
+                rag_app.answer_from_sources("question", sources)
+
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertIn("RuntimeError", raised.exception.detail)
+        self.assertIn("invalid temperature", raised.exception.detail)
+
 
 if __name__ == "__main__":
     unittest.main()

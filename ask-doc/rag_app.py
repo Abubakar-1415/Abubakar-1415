@@ -201,8 +201,8 @@ def rag_components():
                 truncate="END")
         if _llm is None:
             _llm = ChatNVIDIA(
-                model=NVIDIA_CHAT_MODEL, temperature=0, nvidia_api_key=api_key,
-                timeout=60)
+                model=NVIDIA_CHAT_MODEL, temperature=1.0, top_p=0.95,
+                nvidia_api_key=api_key, timeout=60)
         if _qdrant is None:
             _qdrant = QdrantClient(
                 url=os.environ["QDRANT_URL"], api_key=os.environ["QDRANT_API_KEY"], timeout=30)
@@ -412,8 +412,12 @@ def answer_from_sources(query: str, sources: list[dict]) -> dict:
             prompt.format_messages(question=query, context=context))
     except Exception as exc:
         logger.exception("NVIDIA answer generation failed")
+        detail = safe_error_detail(exc)
         raise HTTPException(
-            502, "The answer service failed. Check the NVIDIA API key, quota and model settings.") from exc
+            502,
+            f"NVIDIA answer generation failed ({type(exc).__name__}): "
+            f"{detail or 'Check the NVIDIA API key, quota and model settings.'}",
+        ) from exc
     by_id = {s["id"]: s for s in sources}
     cited = list({sid: by_id[sid] for sid in generated.source_ids if sid in by_id}.values())
     if generated.not_found or not generated.answer.strip() or not cited:
