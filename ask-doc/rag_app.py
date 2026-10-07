@@ -58,24 +58,30 @@ ALLOW_REGISTER = os.environ.get("ALLOW_REGISTER", "1") == "1"
 SESSION_LIMIT = 4 * 3600
 MIN_VECTOR_SIMILARITY = float(os.environ.get("MIN_VECTOR_SIMILARITY", "0.3"))
 NVIDIA_CHAT_MODEL = os.environ.get("NVIDIA_CHAT_MODEL", "nvidia/nemotron-3-super-120b-a12b")
-NVIDIA_EMBEDDING_DIMENSION = int(os.environ.get("NVIDIA_EMBEDDING_DIMENSION", "1024"))
-_RETIRED_EMBEDDING_MODEL = "nvidia/nv-embedqa-e5-v5"
-_NEMOTRON_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-1b-v2"
+_RETIRED_EMBEDDING_MODELS = {
+    "nvidia/nv-embedqa-e5-v5",
+    "nvidia/llama-nemotron-embed-1b-v2",
+}
+_NEMOTRON_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b"
 _configured_embedding_model = os.environ.get("NVIDIA_EMBEDDING_MODEL", "").strip()
-NVIDIA_EMBEDDING_MODEL = (
-    _NEMOTRON_EMBEDDING_MODEL
-    if not _configured_embedding_model
-    or _configured_embedding_model == _RETIRED_EMBEDDING_MODEL
-    else _configured_embedding_model
-)
 QDRANT_FEEDBACK_COLLECTION = "ask_doc_feedback_v1"
-if _configured_embedding_model == _RETIRED_EMBEDDING_MODEL:
+_using_current_embedding_model = (
+    not _configured_embedding_model
+    or _configured_embedding_model in _RETIRED_EMBEDDING_MODELS
+    or _configured_embedding_model == _NEMOTRON_EMBEDDING_MODEL
+)
+if _using_current_embedding_model:
+    NVIDIA_EMBEDDING_MODEL = _NEMOTRON_EMBEDDING_MODEL
+    NVIDIA_EMBEDDING_DIMENSION = 2048
     QDRANT_COLLECTION = (
-        f"ask_doc_documents_llama_nemotron_embed_1b_v2_{NVIDIA_EMBEDDING_DIMENSION}")
+        f"ask_doc_documents_nemotron_3_embed_1b_{NVIDIA_EMBEDDING_DIMENSION}")
 else:
+    NVIDIA_EMBEDDING_MODEL = _configured_embedding_model
+    NVIDIA_EMBEDDING_DIMENSION = int(os.environ.get("NVIDIA_EMBEDDING_DIMENSION", "1024"))
     QDRANT_COLLECTION = os.environ.get(
         "NVIDIA_QDRANT_COLLECTION",
-        f"ask_doc_documents_llama_nemotron_embed_1b_v2_{NVIDIA_EMBEDDING_DIMENSION}")
+        f"ask_doc_documents_{NVIDIA_EMBEDDING_MODEL.replace('/', '_')}_"
+        f"{NVIDIA_EMBEDDING_DIMENSION}")
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_UPLOAD = 10
 MAX_CHUNKS_PER_FILE = int(os.environ.get("MAX_CHUNKS_PER_FILE", "1500"))
@@ -190,19 +196,9 @@ def rag_components():
             503, "RAG is not configured. Set these values: " + ", ".join(missing))
     try:
         if _embeddings is None:
-            if NVIDIA_EMBEDDING_MODEL == _NEMOTRON_EMBEDDING_MODEL:
-                _embeddings = NVIDIAEmbeddings(
-                    model=NVIDIA_EMBEDDING_MODEL,
-                    nvidia_api_key=api_key,
-                    truncate="END",
-                    dimensions=NVIDIA_EMBEDDING_DIMENSION,
-                )
-            else:
-                _embeddings = NVIDIAEmbeddings(
-                    model=NVIDIA_EMBEDDING_MODEL,
-                    nvidia_api_key=api_key,
-                    truncate="END",
-                )
+            _embeddings = NVIDIAEmbeddings(
+                model=NVIDIA_EMBEDDING_MODEL, nvidia_api_key=api_key,
+                truncate="END")
         if _llm is None:
             _llm = ChatNVIDIA(
                 model=NVIDIA_CHAT_MODEL, temperature=0, nvidia_api_key=api_key,
@@ -883,7 +879,7 @@ def upload(files: list[UploadFile] = File(...), user=Depends(auth)):
             elif status_code == 410 or "[410] gone" in error_text or "end of life" in error_text:
                 reason = (
                     "The configured NVIDIA embedding model is retired or unavailable. "
-                    "Set NVIDIA_EMBEDDING_MODEL to nvidia/llama-nemotron-embed-1b-v2 and restart the app.")
+                    "Set NVIDIA_EMBEDDING_MODEL to nvidia/nemotron-3-embed-1b and restart the app.")
             elif ("authentication" in error_type or "unauthenticated" in error_text
                   or status_code in (401, 403) or "401" in error_text or "403" in error_text):
                 reason = "NVIDIA or Qdrant rejected the request. Check the API keys, account limits, and service status."
