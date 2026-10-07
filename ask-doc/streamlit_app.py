@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import io
 import os
-import time
 import uuid
 
 import streamlit as st
@@ -40,43 +39,23 @@ import rag_app as rag
 
 st.set_page_config(page_title="Ask Doc", page_icon=":material/search:", layout="wide")
 
-SESSION_DURATION_SECONDS = 4 * 60 * 60
-SESSION_STARTED_AT_KEY = "_ask_doc_session_started_at"
-
 
 def user_id_for(email: str) -> int:
     digest = hashlib.sha256(email.strip().lower().encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
 
 
-def require_login() -> tuple[str, int]:
-    if not getattr(st.user, "is_logged_in", False):
-        st.title("Ask Doc")
-        st.write("Sign in with Google to access your private document library.")
-        if st.button("Sign in with Google", type="primary"):
-            st.login()
-        st.stop()
-
+def shared_user_id() -> int:
     try:
-        allowed_email = str(st.secrets["CLOUD_USER_EMAIL"]).strip().lower()
-    except StreamlitSecretNotFoundError:
-        allowed_email = ""
-    email = str(getattr(st.user, "email", "") or "").strip().lower()
-    if not allowed_email:
-        st.error("Configure `CLOUD_USER_EMAIL` in app secrets before using the app.")
-        st.stop()
-    if not email or email != allowed_email:
-        st.error("This Google account is not authorized to use this private app.")
-        st.stop()
-    now = time.time()
-    started_at = st.session_state.get(SESSION_STARTED_AT_KEY)
-    if started_at is None:
-        st.session_state[SESSION_STARTED_AT_KEY] = now
-    elif now - started_at >= SESSION_DURATION_SECONDS:
-        st.session_state.pop(SESSION_STARTED_AT_KEY, None)
-        st.logout()
-        st.stop()
-    return email, user_id_for(email)
+        namespace_seed = str(st.secrets["CLOUD_USER_EMAIL"]).strip().lower()
+    except StreamlitSecretNotFoundError as exc:
+        raise RuntimeError(
+            "Configure CLOUD_USER_EMAIL in app secrets to preserve the shared "
+            "document library."
+        ) from exc
+    if not namespace_seed:
+        raise RuntimeError("CLOUD_USER_EMAIL in app secrets must not be empty.")
+    return user_id_for(namespace_seed)
 
 
 def indexed_documents(uid: int) -> list[dict]:
@@ -282,53 +261,15 @@ def record_feedback(
     )
 
 
-def format_remaining(seconds: float) -> str:
-    remaining = max(0, int(seconds))
-    hours, remainder = divmod(remaining, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
-def expire_session_if_needed() -> float:
-    started_at = st.session_state.get(SESSION_STARTED_AT_KEY)
-    if started_at is None:
-        return SESSION_DURATION_SECONDS
-    remaining = SESSION_DURATION_SECONDS - (time.time() - started_at)
-    if remaining <= 0:
-        st.session_state.pop(SESSION_STARTED_AT_KEY, None)
-        st.logout()
-        st.stop()
-    return remaining
-
-
-@st.fragment(run_every="1s")
-def monitor_session_expiry() -> None:
-    remaining = expire_session_if_needed()
-    st.caption(f"Session time remaining: {format_remaining(remaining)}")
-    st.progress(max(0.0, min(1.0, remaining / SESSION_DURATION_SECONDS)))
-
-
-email, uid = require_login()
-header_title, header_session, header_signout = st.columns(
-    [3, 2, 1], vertical_alignment="center"
-)
-with header_title:
-    st.title("Ask Doc")
-    st.caption("Ask your knowledge. Find the answer.")
-with header_session:
-    st.caption(f"Signed in as **{email}**")
-    monitor_session_expiry()
-with header_signout:
-    if st.button("Sign out", icon=":material/logout:", width="stretch"):
-        st.session_state.pop(SESSION_STARTED_AT_KEY, None)
-        st.logout()
+uid = shared_user_id()
+st.title("Ask Doc")
+st.caption("Ask your knowledge. Find the answer.")
 
 st.divider()
 
 with st.sidebar:
-    st.subheader("My profile")
-    st.write(email)
-    st.caption("Private document library")
+    st.subheader("Shared document library")
+    st.caption("Anyone with access to this app can view and manage these documents.")
     st.divider()
 
     st.subheader("Upload your documents")

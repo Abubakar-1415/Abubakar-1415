@@ -1,7 +1,9 @@
 # Ask Doc
 
-Ask Doc lets approved Google accounts upload multiple PDF, DOCX, and XLSX files,
-index them in Qdrant, and ask questions grounded in the uploaded content.
+Ask Doc lets visitors upload multiple PDF, DOCX, and XLSX files, index them in
+Qdrant, and ask questions grounded in the uploaded content. The app is public:
+anyone with its URL can view, search, upload, and delete documents in the shared
+library.
 
 ## Deploy on Streamlit Community Cloud
 
@@ -17,20 +19,12 @@ NVIDIA_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 NVIDIA_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b"
 NVIDIA_EMBEDDING_DIMENSION = "2048"
 NVIDIA_QDRANT_COLLECTION = "ask_doc_documents_nemotron_3_embed_1b_2048"
-ALLOWED_EMAILS = ["you@example.com"]
-
-[auth]
-redirect_uri = "https://YOUR-APP.streamlit.app/oauth2callback"
-cookie_secret = "generate-a-long-random-secret"
-client_id = "your-google-oauth-client-id"
-client_secret = "your-google-oauth-client-secret"
-server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+CLOUD_USER_EMAIL = "you@example.com"
 ```
 
-Create a Google OAuth client and register the exact `redirect_uri` for the
-Streamlit app. Set `ALLOWED_EMAILS` to the Google accounts allowed to use the
-app. Each account receives a private Qdrant namespace. Active login sessions
-automatically sign out after four hours.
+`CLOUD_USER_EMAIL` is used only to retain the existing Qdrant document namespace;
+it does not enable or require Google sign-in. All visitors share that namespace.
+Remove any old `[auth]` OAuth configuration from app secrets.
 
 If an existing deployment still sets `NVIDIA_EMBEDDING_MODEL` to either retired
 embedding model, the app maps it to the currently available
@@ -48,5 +42,5 @@ Install `requirements.txt` and run:
 streamlit run streamlit_app.py
 ```
 
-For local sign-in and provider access, configure the same values in
-`.streamlit/secrets.toml`; never commit that file.
+Configure the same values in `.streamlit/secrets.toml` for local development;
+never commit that file.
