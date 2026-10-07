@@ -14,9 +14,9 @@ NVIDIA_API_KEY = "your-nvidia-api-key"
 QDRANT_URL = "https://your-cluster.example.qdrant.io"
 QDRANT_API_KEY = "your-qdrant-api-key"
 NVIDIA_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
-NVIDIA_EMBEDDING_MODEL = "nvidia/nv-embedqa-e5-v5"
+NVIDIA_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-1b-v2"
 NVIDIA_EMBEDDING_DIMENSION = "1024"
-NVIDIA_QDRANT_COLLECTION = "ask_doc_documents_nvidia_nvembedqa_e5_v5_1024"
+NVIDIA_QDRANT_COLLECTION = "ask_doc_documents_llama_nemotron_embed_1b_v2_1024"
 ALLOWED_EMAILS = ["you@example.com"]
 
 [auth]
@@ -29,7 +29,12 @@ server_metadata_url = "https://accounts.google.com/.well-known/openid-configurat
 
 Create a Google OAuth client and register the exact `redirect_uri` for the
 Streamlit app. Set `ALLOWED_EMAILS` to the Google accounts allowed to use the
-app. Each account receives a private Qdrant namespace.
+app. Each account receives a private Qdrant namespace. Active login sessions
+automatically sign out after four hours.
+
+If an existing deployment still sets `NVIDIA_EMBEDDING_MODEL` to the retired
+`nvidia/nv-embedqa-e5-v5`, the app maps it to the supported
+`nvidia/llama-nemotron-embed-1b-v2` model and uses a separate Qdrant collection.
 
 All API credentials are read from Streamlit secrets. Rotate any key that was
 previously embedded in a local source file. Streamlit Community Cloud does not
