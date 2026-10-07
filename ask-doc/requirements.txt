@@ -1,4 +1,5 @@
 fastapi
+streamlit[auth]>=1.57,<2
 uvicorn
 python-multipart
 python-docx

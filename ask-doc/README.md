@@ -1,33 +1,47 @@
 # Ask Doc
 
-Ask Doc is a private document question-answering web app. It supports PDF,
-Word, and Excel uploads and stores indexed vectors in Qdrant.
+Ask Doc lets approved Google accounts upload multiple PDF, DOCX, and XLSX files,
+index them in Qdrant, and ask questions grounded in the uploaded content.
 
-## Deploy on Render
+## Deploy on Streamlit Community Cloud
 
-The repository-level `render.yaml` defines Ask Doc as a separate Render web
-service rooted at this folder. Connect the repository to Render as a Blueprint,
-then provide the secret values requested during setup:
+Create an app from this repository's `main` branch and select
+`ask-doc/streamlit_app.py` as the entry point. In the app's **Settings → Secrets**,
+configure the values below. Keep these values out of GitHub.
 
-- `ADMIN_USERNAME` and `ADMIN_PASSWORD`
-- `NVIDIA_API_KEY`
-- `QDRANT_URL` and `QDRANT_API_KEY`
+```toml
+NVIDIA_API_KEY = "your-nvidia-api-key"
+QDRANT_URL = "https://your-cluster.example.qdrant.io"
+QDRANT_API_KEY = "your-qdrant-api-key"
+NVIDIA_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+NVIDIA_EMBEDDING_MODEL = "nvidia/nv-embedqa-e5-v5"
+NVIDIA_EMBEDDING_DIMENSION = "1024"
+NVIDIA_QDRANT_COLLECTION = "ask_doc_documents_nvidia_nvembedqa_e5_v5_1024"
+ALLOWED_EMAILS = ["you@example.com"]
 
-The NVIDIA key is read only from the environment; no API key is stored in this
-folder. Rotate any key that was previously embedded in a local source file.
+[auth]
+redirect_uri = "https://YOUR-APP.streamlit.app/oauth2callback"
+cookie_secret = "generate-a-long-random-secret"
+client_id = "your-google-oauth-client-id"
+client_secret = "your-google-oauth-client-secret"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+```
 
-Optional email notifications use `OWNER_EMAIL`, `SMTP_HOST`, `SMTP_USERNAME`,
-and `SMTP_PASSWORD`.
+Create a Google OAuth client and register the exact `redirect_uri` for the
+Streamlit app. Set `ALLOWED_EMAILS` to the Google accounts allowed to use the
+app. Each account receives a private Qdrant namespace.
 
-The service uses a persistent Render disk for the SQLite database. Qdrant
-stores vectors in a separate collection.
+All API credentials are read from Streamlit secrets. Rotate any key that was
+previously embedded in a local source file. Streamlit Community Cloud does not
+provide a persistent local disk; document vectors persist in Qdrant.
 
 ## Run locally
 
-Install `requirements.txt`, configure the same environment variables, and run:
+Install `requirements.txt` and run:
 
 ```powershell
-python rag_app.py
+streamlit run streamlit_app.py
 ```
 
-The app listens on `http://127.0.0.1:8000` by default.
+For local sign-in and provider access, configure the same values in
+`.streamlit/secrets.toml`; never commit that file.
