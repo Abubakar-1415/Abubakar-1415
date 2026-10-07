@@ -2,7 +2,8 @@
 
 Ask Doc lets people create an account with a username and password, upload
 multiple PDF, DOCX, and XLSX files, and ask questions grounded in their own
-private document library. Answers are displayed as structured JSON.
+private document library. Answers are shown in readable text with expandable
+source citations; structured JSON remains available on demand.
 
 ## Deploy on Streamlit Community Cloud
 

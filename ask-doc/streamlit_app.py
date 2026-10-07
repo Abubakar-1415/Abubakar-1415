@@ -496,8 +496,31 @@ if result:
     answer = result["answer"]
     citations = answer["citations"]
     with st.container(border=True):
-        st.subheader("Answer (JSON)")
-        st.json(answer, expanded=True)
+        st.subheader("Answer")
+        if answer["not_found"]:
+            st.info(answer["answer"])
+        else:
+            st.markdown(answer["answer"])
+            st.caption(
+                f"Relevance estimate: {answer['match_percent']}% "
+                "(not a calibrated probability of correctness)"
+            )
+
+        if citations:
+            st.markdown("#### Sources")
+            for index, citation in enumerate(citations, start=1):
+                location = citation.get("page_num") or citation.get("location") or ""
+                source_label = (
+                    f"{index}. {citation['doc']} · {citation['title']}"
+                )
+                if location:
+                    source_label += f" · {location}"
+                with st.expander(source_label):
+                    st.caption(citation["kind"].upper())
+                    st.write(citation["excerpt"])
+
+        with st.expander("View answer as JSON"):
+            st.json(answer, expanded=True)
 
         if citations and not answer["not_found"]:
             st.divider()
