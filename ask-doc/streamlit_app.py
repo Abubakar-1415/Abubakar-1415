@@ -10,11 +10,11 @@ import uuid
 
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
+from qdrant_client import QdrantClient
 
 import auth_store as auth
 
 SECRET_ENV_KEYS = (
-    "DATABASE_URL",
     "NVIDIA_API_KEY",
     "QDRANT_URL",
     "QDRANT_API_KEY",
@@ -44,7 +44,7 @@ import rag_app as rag
 
 st.set_page_config(page_title="Ask Doc", page_icon=":material/search:", layout="wide")
 
-SESSION_DURATION_SECONDS = 4 * 60 * 60
+SESSION_DURATION_SECONDS = auth.SESSION_DURATION_SECONDS
 SESSION_STARTED_AT_KEY = "_ask_doc_session_started_at"
 USER_ID_KEY = "_ask_doc_user_id"
 USERNAME_KEY = "_ask_doc_username"
@@ -52,9 +52,11 @@ logger = logging.getLogger("ask_doc.streamlit")
 
 
 @st.cache_resource
-def initialize_user_store() -> bool:
-    auth.initialize_user_store(os.environ.get("DATABASE_URL", ""))
-    return True
+def initialize_user_store() -> QdrantClient:
+    return auth.initialize_user_store(
+        os.environ.get("QDRANT_URL", ""),
+        os.environ.get("QDRANT_API_KEY", ""),
+    )
 
 
 def clear_authenticated_session() -> None:
@@ -99,14 +101,10 @@ def show_authentication() -> None:
             if password != confirm_password:
                 st.error("The passwords do not match.")
                 return
-            uid = auth.create_user(
-                os.environ.get("DATABASE_URL", ""), username, password
-            )
+            uid = auth.create_user(user_store, username, password)
             normalized_username = auth.normalize_username(username)
         else:
-            account = auth.authenticate_user(
-                os.environ.get("DATABASE_URL", ""), username, password
-            )
+            account = auth.authenticate_user(user_store, username, password)
             if account is None:
                 st.error("Invalid username or password.")
                 return
@@ -349,13 +347,13 @@ def record_feedback(
 
 
 try:
-    initialize_user_store()
+    user_store = initialize_user_store()
 except Exception:
-    logger.exception("Ask Doc account database initialization failed")
+    logger.exception("Ask Doc account store initialization failed")
     st.title("Ask Doc")
     st.error(
-        "The account database is not configured or unavailable. Add a working "
-        "PostgreSQL DATABASE_URL in the Streamlit app secrets."
+        "The account store is not configured or unavailable. Check the Qdrant "
+        "URL and API key in Streamlit app secrets."
     )
     st.stop()
 

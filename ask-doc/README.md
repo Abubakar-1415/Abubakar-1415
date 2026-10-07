@@ -14,7 +14,6 @@ configure the values below. Keep these values out of GitHub.
 NVIDIA_API_KEY = "your-nvidia-api-key"
 QDRANT_URL = "https://your-cluster.example.qdrant.io"
 QDRANT_API_KEY = "your-qdrant-api-key"
-DATABASE_URL = "postgresql://user:password@host:5432/database?sslmode=require"
 NVIDIA_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 NVIDIA_EMBEDDING_MODEL = "nvidia/nemotron-3-embed-1b"
 NVIDIA_EMBEDDING_DIMENSION = "2048"
@@ -22,11 +21,12 @@ NVIDIA_QDRANT_COLLECTION = "ask_doc_documents_nemotron_3_embed_1b_2048"
 MAX_UPLOAD_MB = "100"
 ```
 
-Set `DATABASE_URL` to your managed PostgreSQL connection string in the app's
-**Settings → Secrets**. Account records have unique case-insensitive usernames;
-passwords are stored as salted scrypt hashes, never as plaintext. Remove the
-old Google OAuth settings. Each account receives a separate Qdrant namespace,
-and sessions expire after four hours.
+No separate database is needed: account records are stored in the
+`ask_doc_users_v1` Qdrant collection, alongside but separately from document
+vectors. Account records have unique case-insensitive usernames; passwords are
+stored as salted scrypt hashes, never as plaintext. Remove the old Google OAuth
+settings. Each account receives a separate Qdrant namespace, and sessions
+expire after four hours.
 
 The previous shared-library documents are preserved in their old Qdrant
 namespace and are not visible to newly registered accounts. They have no

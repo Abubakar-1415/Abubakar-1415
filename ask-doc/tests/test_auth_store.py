@@ -1,9 +1,9 @@
 import unittest
+import json
 from unittest.mock import MagicMock, patch
 
-import psycopg
-
 import auth_store
+import rag_app
 
 
 class AuthStoreTests(unittest.TestCase):
@@ -21,6 +21,15 @@ class AuthStoreTests(unittest.TestCase):
         second = auth_store._password_digest("long-password-123", b"b" * 16)
         self.assertNotEqual(first, second)
         self.assertNotEqual(first.hex(), "long-password-123")
+
+    def test_usernames_map_to_private_stable_ids(self):
+        alice_id = auth_store.user_id_for("alice")
+        self.assertEqual(alice_id, auth_store.user_id_for("alice"))
+        self.assertNotEqual(alice_id, auth_store.user_id_for("bob"))
+        self.assertNotEqual(
+            auth_store.user_point_id("alice"),
+            auth_store.user_point_id("bob"),
+        )
 
     def test_session_expires_at_four_hour_boundary(self):
         started_at = 1000.0
@@ -40,36 +49,82 @@ class AuthStoreTests(unittest.TestCase):
     def test_authentication_accepts_only_the_matching_password(self):
         password = "long-password-123"
         salt = b"s" * 16
-        connection = MagicMock()
-        connection.__enter__.return_value = connection
-        connection.execute.return_value.fetchone.return_value = (
-            123,
-            "alice",
-            salt.hex(),
-            auth_store._password_digest(password, salt).hex(),
-        )
+        point = MagicMock()
+        point.payload = {
+            "user_id": 123,
+            "username": "alice",
+            "password_salt": salt.hex(),
+            "password_hash": auth_store._password_digest(password, salt).hex(),
+        }
+        client = MagicMock()
+        client.retrieve.return_value = [point]
 
-        with patch.object(auth_store.psycopg, "connect", return_value=connection):
+        with patch.object(auth_store, "_get_user", return_value=point):
             self.assertEqual(
-                auth_store.authenticate_user("postgresql://test", "Alice", password),
+                auth_store.authenticate_user(client, "Alice", password),
                 (123, "alice"),
             )
             self.assertIsNone(
                 auth_store.authenticate_user(
-                    "postgresql://test", "alice", "another-password"
+                    client, "alice", "another-password"
                 )
             )
 
-    def test_duplicate_username_is_reported(self):
-        connection = MagicMock()
-        connection.__enter__.return_value = connection
-        connection.execute.side_effect = psycopg.errors.UniqueViolation("duplicate")
+    def test_registration_uses_atomic_insert_only(self):
+        client = MagicMock()
 
-        with patch.object(auth_store.psycopg, "connect", return_value=connection):
+        with patch.object(auth_store, "_get_user", return_value=None):
+            user_id = auth_store.create_user(
+                client, "Alice", "long-password-123"
+            )
+
+        self.assertEqual(user_id, auth_store.user_id_for("alice"))
+        call = client.upsert.call_args.kwargs
+        self.assertEqual(call["update_mode"], auth_store.models.UpdateMode.INSERT_ONLY)
+        saved = call["points"][0]
+        self.assertEqual(saved.payload["username"], "alice")
+        self.assertNotEqual(saved.payload["password_hash"], "long-password-123")
+
+    def test_existing_username_is_not_overwritten(self):
+        client = MagicMock()
+        existing = MagicMock()
+        with patch.object(auth_store, "_get_user", return_value=existing):
             with self.assertRaises(auth_store.UsernameAlreadyExistsError):
                 auth_store.create_user(
-                    "postgresql://test", "alice", "long-password-123"
+                    client, "alice", "long-password-123"
                 )
+        client.upsert.assert_not_called()
+
+    def test_concurrent_duplicate_registration_is_rejected(self):
+        client = MagicMock()
+        existing = MagicMock()
+        client.upsert.side_effect = RuntimeError("insert-only conflict")
+        with patch.object(
+            auth_store, "_get_user", side_effect=[None, existing]
+        ):
+            with self.assertRaises(auth_store.UsernameAlreadyExistsError):
+                auth_store.create_user(
+                    client, "alice", "long-password-123"
+                )
+
+    def test_missing_account_is_rejected(self):
+        client = MagicMock()
+        with patch.object(auth_store, "_get_user", return_value=None):
+            self.assertIsNone(
+                auth_store.authenticate_user(
+                    client, "missing-user", "long-password-123"
+                )
+            )
+
+    def test_user_store_requires_qdrant_credentials(self):
+        with self.assertRaisesRegex(RuntimeError, "QDRANT_URL and QDRANT_API_KEY"):
+            auth_store.initialize_user_store("", "")
+
+    def test_empty_search_answer_is_json_serializable(self):
+        answer = rag_app.answer_from_sources("question", [])
+        serialized = json.dumps(answer)
+        self.assertEqual(json.loads(serialized), answer)
+        self.assertTrue(answer["not_found"])
 
 
 if __name__ == "__main__":

@@ -1,14 +1,13 @@
-"""Persistent username/password storage for Ask Doc."""
+"""Qdrant-backed username/password storage for Ask Doc."""
 from __future__ import annotations
 
 import hashlib
 import hmac
 import os
 import re
-import secrets
+import uuid
 
-import psycopg
-from psycopg.errors import UniqueViolation
+from qdrant_client import QdrantClient, models
 
 USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
 PASSWORD_MIN_LENGTH = 12
@@ -17,6 +16,7 @@ SESSION_DURATION_SECONDS = 4 * 60 * 60
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
+USER_COLLECTION = "ask_doc_users_v1"
 
 
 class UsernameAlreadyExistsError(Exception):
@@ -44,6 +44,15 @@ def validate_password(password: str) -> None:
         raise ValueError("Password must be no more than 1024 characters.")
 
 
+def user_point_id(username: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"ask-doc-user:{username}"))
+
+
+def user_id_for(username: str) -> int:
+    digest = hashlib.sha256(f"ask-doc-user:{username}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+
 def _password_digest(password: str, salt: bytes) -> bytes:
     return hashlib.scrypt(
         password.encode("utf-8"),
@@ -55,65 +64,86 @@ def _password_digest(password: str, salt: bytes) -> bytes:
     )
 
 
-def initialize_user_store(database_url: str) -> None:
-    if not database_url.strip():
-        raise RuntimeError("Set DATABASE_URL in Streamlit app secrets.")
-    with psycopg.connect(database_url) as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS ask_doc_users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                password_salt TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+def initialize_user_store(qdrant_url: str, api_key: str) -> QdrantClient:
+    if not qdrant_url.strip() or not api_key.strip():
+        raise RuntimeError("Set QDRANT_URL and QDRANT_API_KEY in app secrets.")
+    client = QdrantClient(url=qdrant_url, api_key=api_key, timeout=30)
+    try:
+        if not client.collection_exists(USER_COLLECTION):
+            client.create_collection(
+                collection_name=USER_COLLECTION,
+                vectors_config=models.VectorParams(
+                    size=1, distance=models.Distance.COSINE
+                ),
             )
-            """
+        client.create_payload_index(
+            collection_name=USER_COLLECTION,
+            field_name="username",
+            field_schema=models.PayloadSchemaType.KEYWORD,
         )
+    except Exception:
+        client.close()
+        raise
+    return client
 
 
-def create_user(database_url: str, username: str, password: str) -> int:
+def _get_user(client: QdrantClient, username: str):
+    points = client.retrieve(
+        collection_name=USER_COLLECTION,
+        ids=[user_point_id(username)],
+        with_payload=True,
+        with_vectors=False,
+    )
+    return points[0] if points else None
+
+
+def create_user(client: QdrantClient, username: str, password: str) -> int:
     normalized = normalize_username(username)
     validate_password(password)
+    if _get_user(client, normalized) is not None:
+        raise UsernameAlreadyExistsError
     salt = os.urandom(16)
     digest = _password_digest(password, salt)
-    user_id = secrets.randbits(63) or 1
+    user_id = user_id_for(normalized)
+    point = models.PointStruct(
+        id=user_point_id(normalized),
+        vector=[1.0],
+        payload={
+            "user_id": user_id,
+            "username": normalized,
+            "password_salt": salt.hex(),
+            "password_hash": digest.hex(),
+        },
+    )
     try:
-        with psycopg.connect(database_url) as connection:
-            connection.execute(
-                """
-                INSERT INTO ask_doc_users
-                    (user_id, username, password_salt, password_hash)
-                VALUES (%s, %s, %s, %s)
-                """,
-                (user_id, normalized, salt.hex(), digest.hex()),
-            )
-    except UniqueViolation as exc:
-        raise UsernameAlreadyExistsError from exc
+        client.upsert(
+            collection_name=USER_COLLECTION,
+            points=[point],
+            wait=True,
+            update_mode=models.UpdateMode.INSERT_ONLY,
+        )
+    except Exception as exc:
+        existing = _get_user(client, normalized)
+        if existing is not None:
+            raise UsernameAlreadyExistsError from exc
+        raise
     return user_id
 
 
 def authenticate_user(
-    database_url: str, username: str, password: str
+    client: QdrantClient, username: str, password: str
 ) -> tuple[int, str] | None:
     normalized = normalize_username(username)
-    with psycopg.connect(database_url) as connection:
-        row = connection.execute(
-            """
-            SELECT user_id, username, password_salt, password_hash
-            FROM ask_doc_users
-            WHERE username = %s
-            """,
-            (normalized,),
-        ).fetchone()
-
-    if row is None:
+    point = _get_user(client, normalized)
+    if point is None or not point.payload:
         candidate = _password_digest(password, b"\0" * 16)
         hmac.compare_digest(candidate, b"\0" * 32)
         return None
 
-    user_id, stored_username, salt_hex, digest_hex = row
-    candidate = _password_digest(password, bytes.fromhex(salt_hex))
-    if not hmac.compare_digest(candidate.hex(), digest_hex):
+    payload = point.payload
+    salt = bytes.fromhex(str(payload["password_salt"]))
+    expected = str(payload["password_hash"])
+    candidate = _password_digest(password, salt)
+    if not hmac.compare_digest(candidate.hex(), expected):
         return None
-    return int(user_id), str(stored_username)
+    return int(payload["user_id"]), str(payload["username"])

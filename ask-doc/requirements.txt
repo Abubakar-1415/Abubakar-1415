@@ -1,6 +1,5 @@
 fastapi
 streamlit>=1.57,<2
-psycopg[binary]>=3.2,<4
 uvicorn
 python-multipart
 python-docx
